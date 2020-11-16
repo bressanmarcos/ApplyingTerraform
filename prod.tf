@@ -17,7 +17,6 @@ variable "web_instance_type" {
   type = string
 }
 
-
 provider "aws" {
   profile = "default"
   region = "sa-east-1"
@@ -27,6 +26,8 @@ resource "aws_s3_bucket" "prod_tf_course" {
   bucket = "tf-course-15111996"
   acl = "private"
 }
+
+resource "aws_default_vpc" "default" {}
 
 resource "aws_default_subnet" "default_az1" {
   availability_zone = "sa-east-1a"
@@ -41,8 +42,6 @@ resource "aws_default_subnet" "default_az2" {
     "Terraform" : "true"
   }
 }  
-
-resource "aws_default_vpc" "default" {}
 
 resource "aws_security_group" "prod_web" {
   name = "prod_web"
@@ -66,7 +65,7 @@ resource "aws_security_group" "prod_web" {
     from_port = 0
     to_port = 0
     protocol = "-1"
-    cidr_blocks = var.whitelist
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   tags = {
@@ -74,60 +73,15 @@ resource "aws_security_group" "prod_web" {
   }
 }
 
-resource "aws_instance" "prod_web" {
-  count = 2
+module "web_app" {
+  source               = "./modules/web_app"
 
-  ami = var.web_image_id
-  instance_type = var.web_instance_type
-  vpc_security_group_ids = [
-    aws_security_group.prod_web.id
-  ]
-  
-  tags = {
-    "Terraform" : "true"
-  }
+  web_desired_capacity = var.web_desired_capacity
+  web_max_size         = var.web_max_size
+  web_min_size         = var.web_min_size
+  web_image_id         = var.web_image_id
+  web_instance_type    = var.web_instance_type
+  subnets              = [aws_default_subnet.default_az1.id, aws_default_subnet.default_az2.id]
+  security_groups      = [aws_security_group.prod_web.id]
+  web_app              = "prod"
 }
-
-resource "aws_elb" "prod_web" {
-  name      = "prod-web-loadbalancer"
-  subnets = [aws_default_subnet.default_az1.id, aws_default_subnet.default_az2.id]
-  security_groups = [aws_security_group.prod_web.id]
-
-  listener {
-    instance_port = 80
-    instance_protocol = "http"
-    lb_port = 80
-    lb_protocol = "http"
-  }
-}
-
-resource "aws_launch_template" "prod_web" {
-  name_prefix   = "prod-web"
-  image_id      = var.web_image_id
-  instance_type = var.web_instance_type
-}
-
-resource "aws_autoscaling_group" "prod_web" {
-  # availability_zones = ["sa-east-1a", "sa-east-1b"]
-  desired_capacity   = var.web_desired_capacity
-  max_size           = var.web_max_size
-  min_size           = var.web_min_size
-  vpc_zone_identifier = [aws_default_subnet.default_az1.id, aws_default_subnet.default_az2.id]
-
-  launch_template {
-    id      = aws_launch_template.prod_web.id
-    version = "$Latest"
-  }
-  tag {
-    key =  "Terraform" 
-    value = "true"
-    propagate_at_launch = true
-  }
-}
-
-resource "aws_autoscaling_attachment" "prod_web" {
-  autoscaling_group_name = aws_autoscaling_group.prod_web.id
-  elb                    = aws_elb.prod_web.id
-}
-
-
